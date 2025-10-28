@@ -1,0 +1,162 @@
+parameters:
+- name: stages
+  type: object
+  default:
+    - name: rg
+
+trigger:
+  branches:
+    include:
+    - '*'
+
+pr:
+  branches:
+    include:
+    - '*'
+
+pool:
+  vmImage: 'ubuntu-latest'
+
+
+variables:
+  TF_VERSION: 'latest'
+  TF_DIR: '$(System.DefaultWorkingDirectory)'                          # <-- folder containing your .tf files
+  TFSTATE_BUCKET: 'tf-state-ag'
+  TFSTATE_PREFIX: 'aws'
+  AWS_REGION: 'eu-west-1'
+
+stages:
+- ${{ each stage in parameters.stages }}:
+  - stage: Terraform_${{ stage.name }}
+    displayName: "Terraform (${{ stage.name }})"
+    variables:
+      - group: aws-${{ stage.name }}
+      - group: CCoE-Common
+      - name: TF_VARS_FILE
+        value: 'variables-${{ stage.name }}.tfvars'   # per-env tfvars
+
+    jobs:
+    - job: InitValidate
+      displayName: "Init & Validate (${{ stage.name }})"
+      steps:
+        - checkout: self
+
+        - task: TerraformInstaller@1
+          displayName: "Install Terraform $(TF_VERSION)"
+          inputs:
+            terraformVersion: "$(TF_VERSION)"
+
+        - task: TerraformTaskV4@4
+          displayName: "Terraform init (S3 backend)"
+          inputs:
+            provider: 'aws'
+            command: 'init'
+            workingDirectory: '$(TF_DIR)'
+            backendServiceAWS: 'pipeline-almondAWS-${{ stage.name }}'
+            backendAWSBucketName: '$(TFSTATE_BUCKET)'
+            backendAWSKey: '$(TFSTATE_PREFIX)/${{ stage.name }}/terraform.tfstate'
+            backendAWSRegion: '$(AWS_REGION)'
+
+        - task: TerraformTaskV4@4
+          displayName: "Terraform validate"
+          inputs:
+            provider: 'aws'
+            command: 'validate'
+            workingDirectory: '$(TF_DIR)'
+
+    - job: Plan
+      displayName: "Plan (${{ stage.name }})"
+      dependsOn: InitValidate
+      steps:
+        - checkout: self
+
+        - task: TerraformInstaller@1
+          displayName: "Install Terraform $(TF_VERSION)"
+          inputs:
+            terraformVersion: "$(TF_VERSION)"
+        
+        - task: TerraformTaskV4@4
+          displayName: "Terraform init (S3 backend)"
+          env:
+           AWS_ACCESS_KEY_ID: $(AWS_ACCESS_KEY_ID)
+           AWS_SECRET_ACCESS_KEY: $(AWS_SECRET_ACCESS_KEY)
+           AWS_REGION: $(AWS_REGION)
+           TF_TOKEN_com: $(gitlab_tf_token) 
+          inputs:
+            provider: 'aws'
+            command: 'init'
+            workingDirectory: '$(TF_DIR)'
+            backendServiceAWS: 'pipeline-almondAWS-${{ stage.name }}'
+            backendAWSBucketName: '$(TFSTATE_BUCKET)'
+            backendAWSKey: '$(TFSTATE_PREFIX)/${{ stage.name }}/terraform.tfstate'
+            backendAWSRegion: '$(AWS_REGION)'
+
+        - task: TerraformTaskV4@4
+          name: terraformPlan
+          displayName: "Terraform plan"
+          inputs:
+            provider: 'aws'
+            command: 'plan'
+            workingDirectory: '$(TF_DIR)'
+            environmentServiceNameAWS: 'pipeline-almondAWS-${{ stage.name }}'
+            # commandOptions: '-out=tfplan -var-file=$(TF_VARS_FILE)'
+            commandOptions: '-out=tfplan -var-file=$(TF_VARS_FILE)  -var="windows_admin_password=$(WIN_ADMIN_PASSWORD)"'
+
+        - task: PublishPipelineArtifact@1
+          displayName: "Publish plan artifact"
+          inputs:
+            targetPath: '$(TF_DIR)/tfplan'               # publish the plan file
+            artifact: 'ag-infra-${{ stage.name }}'
+            publishLocation: 'pipeline'
+
+    - job: ConfirmApplyTerraformPlan
+      displayName: 'Confirm terraform apply ${{ stage.name }}'
+      dependsOn: Plan
+      pool: server
+      steps:
+        - task: ManualValidation@0
+          inputs:
+            emailRecipients: 'sundeepreddy@gmail.com'
+            instructions: 'Please validate the Terraform plan and resume to apply.'
+
+    - job: TerraformApply
+      displayName: 'Terraform : Apply ${{ stage.name }}'
+      dependsOn: ConfirmApplyTerraformPlan
+      steps:
+        - checkout: self
+
+        - task: TerraformInstaller@1
+          displayName: "Install Terraform $(TF_VERSION)"
+          inputs:
+            terraformVersion: "$(TF_VERSION)"
+
+        - task: DownloadPipelineArtifact@2
+          displayName: "Download plan artifact"
+          inputs:
+            artifact: 'ag-infra-${{ stage.name }}'
+            targetPath: '$(TF_DIR)'                      # download into the working dir
+            buildType: 'current'
+
+        - task: TerraformTaskV4@4
+          displayName: "Terraform init (S3 backend)"
+          inputs:
+            provider: 'aws'
+            command: 'init'
+            workingDirectory: '$(TF_DIR)'
+            backendServiceAWS: 'pipeline-almondAWS-${{ stage.name }}'
+            backendAWSBucketName: '$(TFSTATE_BUCKET)'
+            backendAWSKey: '$(TFSTATE_PREFIX)/${{ stage.name }}/terraform.tfstate'
+            backendAWSRegion: '$(AWS_REGION)'
+          env: 
+             TF_TOKEN_com: $(gitlab_tf_token)  
+
+        # Apply using the saved plan file
+        - task: TerraformTaskV4@4
+          name: terraformApply
+          displayName: "Terraform apply (from plan)"
+          inputs:
+            provider: 'aws'
+            command: 'apply'
+            workingDirectory: '$(TF_DIR)'
+            environmentServiceNameAWS: 'pipeline-almondAWS-${{ stage.name }}'
+            commandOptions: '-input=false tfplan'
