@@ -160,3 +160,155 @@ stages:
             workingDirectory: '$(TF_DIR)'
             environmentServiceNameAWS: 'pipeline-almondAWS-${{ stage.name }}'
             commandOptions: '-input=false tfplan'
+----------------------------------------------------------------------------------------------------------------------------------------------------------
+
+parameters:
+
+- name: stages
+  type: object
+  default:
+   - name: rg
+
+trigger:
+  branches:
+    include:
+    - develop
+    - '*'
+#####
+pr:
+  branches:
+    include:
+    - '*'
+
+pool:
+  vmImage: 'ubuntu-latest'
+  
+stages:
+ - ${{each stage in parameters.stages}}:
+   - stage: TerraformDeploy${{ stage.name }}
+     dependsOn: []
+     variables:
+        - group: aws-${{ stage.name }}
+        - group: CCoE-Common
+     jobs:
+     - job: terraformInitValidate
+       displayName: 'Terraform init&validate ${{ stage.name }} '
+       steps: 
+       - checkout: self
+
+       - task: ms-devlabs.custom-terraform-tasks.custom-terraform-installer-task.TerraformInstaller@1
+         inputs:
+            terraformVersion: 'latest'
+       
+       - script: |
+           git config --global url."https://$(AzureDevOpsPAT)@dev.azure.com/".insteadOf "https://dev.azure.com/"
+         displayName: 'Set up git credentials'
+
+       - task: TerraformTaskV4@4
+         displayName: 'Terraform : Init ${{ stage.name }}'
+         inputs:
+            provider: 'azurerm'
+            command: 'init'
+            backendServiceArm: 'pipeline-devtest'
+            backendAzureRmResourceGroupName: 'rg-pipeline-states-devtest'
+            backendAzureRmStorageAccountName: 'xxxxxxxxxxxxxxxxx'
+            backendAzureRmContainerName: 'tfstate'
+            backendAzureRmKey: 'bridge-ag-${{ stage.name }}.tfstate'
+         env: 
+             TF_TOKEN_com: $(gitlab_tf_token)
+       - task: TerraformTaskV4@4
+         displayName: 'Terraform : Validate ${{ stage.name }}'
+         inputs:
+          command: validate
+
+       - task: TerraformTaskV4@4
+         name: terraformPlan
+         displayName: 'Terraform : Plan ${{ stage.name }}'
+         inputs:
+           provider: 'aws'
+           command: 'plan'
+           commandOptions: '-out=tfplan -var "datadog_api_key=$(datadog_api_key)" -var "azdo_pat=$(azdo_pat)" -var "datadog_app_key=$(datadog_app_key)" -var "registry_auth_b64_dev=$(registry_auth_b64_dev)" -var "registry_auth_b64_prd=$(registry_auth_b64_prd)" -var-file=variables-${{ stage.name }}.tfvars'
+           environmentServiceNameAWS: 'pipeline-${{ stage.name }}'
+      
+       
+       - task: PublishPipelineArtifact@1
+         inputs:
+           targetPath: 'tfplan'
+           artifact: WebApp-ag-${{stage.name}}
+           publishLocation: 'pipeline'
+
+           
+  
+     - job: ConfirmApplyTerraformPlan
+       condition: succeeded()
+      #  condition: and(succeeded(), eq(variables['Build.SourceBranch'], 'refs/heads/develop'))
+       displayName: 'Confirm terraform apply ${{ stage.name }}'
+       dependsOn: terraformInitValidate
+       pool: server
+       steps:
+      
+       - task:  ManualValidation@0
+         inputs:
+             emailRecipients: sundeep.reddy@gmail.com
+             instructions: 'Please validate the build configuration and resume'
+
+
+     - job: terraformInitandApply
+       condition: succeeded()
+      #  condition: and(succeeded(), eq(variables['Build.SourceBranch'], 'refs/heads/develop'))
+       dependsOn: ConfirmApplyTerraformPlan
+       displayName: 'Terraform :  Apply ${{ stage.name }}'
+       steps:
+       - checkout: self
+       
+       - task: ms-devlabs.custom-terraform-tasks.custom-terraform-installer-task.TerraformInstaller@1
+         inputs:
+            terraformVersion: 'latest'
+
+       - script: |
+           git config --global url."https://$(AzureDevOpsPAT)@dev.azure.com/".insteadOf "https://dev.azure.com/"
+         displayName: 'Set up git credentials'
+
+       - task: DownloadPipelineArtifact@2
+         inputs:
+           artifact: WebApp-${{stage.name}}
+           targetPath: '$(System.DefaultWorkingDirectory)'
+           buildType: 'current'
+      
+     
+       - task: TerraformTaskV4@4
+         displayName: Init Terraform
+         env:
+           AWS_ACCESS_KEY_ID: $(AWS_ACCESS_KEY_ID)
+           AWS_SECRET_ACCESS_KEY: $(AWS_SECRET_ACCESS_KEY)
+           AWS_REGION: $(AWS_REGION)
+           TF_TOKEN_com: $(gitlab_tf_token)
+           #AWS_ADMIN_ROLE: $(AWS_ADMIN_ROLE)
+         inputs:
+             provider: 'azurerm'
+             command: 'init'
+             backendServiceArm: 'pipeline-devtest'
+             backendAzureRmResourceGroupName: 'rg-pipeline-states-devtest'
+             backendAzureRmStorageAccountName: 'xxxxxxxxxxxxxxx'
+             backendAzureRmContainerName: 'tfstate'
+             backendAzureRmKey: 'bridge-ag-${{ stage.name }}.tfstate'
+       - script: |
+              #aws configure set aws_access_key_id $(AWS_ACCESS_KEY_ID)
+                #aws configure set aws_secret_access_key $(AWS_SECRET_ACCESS_KEY)
+                #aws configure set region $(AWS_REGION) --profile default
+                  #aws configure set profile.default.role_arn $(AWS_ADMIN_ROLE)
+                  #aws configure set profile.default.source_profile default
+                  #aws configure list 
+                    
+
+
+       - task: TerraformTaskV4@4
+         displayName: Apply Terraform Plan
+         inputs:
+           provider: 'aws'
+           command: 'apply'
+           commandOptions: 'tfplan'
+           #commandOptions: '-auto-approve -var-file=variables-${{ stage.name }}.tfvars'
+           environmentServiceNameAWS: 'pipeline-${{ stage.name }}'
+           workingDirectory: $(System.DefaultWorkingDirectory)
+--------------------------------------------------------------------------------------------------------------------------
