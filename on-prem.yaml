@@ -1,0 +1,349 @@
+
+trigger:
+  branches:
+    exclude: ['*']
+
+parameters:
+  - name: major_version
+    type: number
+    default: 1
+  - name: minor_version
+    type: number
+    default: 0
+  - name: patch_version
+    type: number
+    default: 0
+  - name: environments
+    displayName: 'Select environments to deploy to'
+    type: object
+    default: [GTP694]
+  - name: tag
+    type: string
+    default: 'N/A'
+    values:
+      - dev
+      - latest
+      - feature-test
+      - N/A
+  - name: registry
+    type: string
+    values:
+      - cralmondgamingdevtestweu001
+      - cralmondgamingprodweu001
+    default: cralmondgamingdevtestweu001
+  - name: sqlUserSet
+    type: string
+    values:
+      - User
+      - Application
+  - name: overrideCriticalSha
+    displayName: Override Critical Sha (will use the tag mentioned in the parameter above)
+    type: boolean
+    default: false     
+  - name: releaseToInstall
+    type: string
+    displayName: 'Release to install - leave as N/A to rebuild release instead of installing it from a release package'
+    default: 'N/A'
+
+variables:
+  - group: _automation-pat
+  - name: vAzureLibraryPAT
+    value: $[variables.AzureLibraryPAT]
+  - name: version
+    value: ${{ parameters.major_version }}.${{ parameters.minor_version }}.${{ parameters.patch_version }}
+  
+stages:
+  - stage: Deploy
+    displayName: 'Multi-Environment Deploy'
+    jobs:
+    # Deploy GTP environments
+    - ${{ each environment in parameters.environments }}:
+      - ${{ if startsWith(upper(environment), 'GTP') }}:
+        - template: azure-pipelines-cloud-template.yaml
+          parameters:
+            axiom: ${{ environment }}
+            tag: ${{ parameters.tag }}
+            registry: ${{ parameters.registry }}
+            sqlUserSet: ${{ parameters.sqlUserSet }}
+            releaseToInstall: ${{ parameters.releaseToInstall }}
+            department: 'GTP'
+            vAzureLibraryPAT: $(vAzureLibraryPAT)
+            version: $(version)
+            overrideCriticalSha: ${{ parameters.overrideCriticalSha }}
+    
+    # Deploy EMP environments  
+    - ${{ each environment in parameters.environments }}:
+      - ${{ if contains(lower(environment), 'EMP') }}:
+        - template: azure-pipelines-cloud-template.yaml
+          parameters:
+            axiom: ${{ environment }}
+            tag: ${{ parameters.tag }}
+            registry: ${{ parameters.registry }}
+            sqlUserSet: ${{ parameters.sqlUserSet }}
+            releaseToInstall: ${{ parameters.releaseToInstall }}
+            department: 'EMP'
+            vAzureLibraryPAT: $(vAzureLibraryPAT)
+            version: $(version)
+            overrideCriticalSha: ${{ parameters.overrideCriticalSha }}
+    
+    # Deploy LNP environments
+    - ${{ each environment in parameters.environments }}:
+      - ${{ if contains(lower(environment), 'LNP') }}:
+        - template: azure-pipelines-cloud-template.yaml
+          parameters:
+            axiom: ${{ environment }}
+            tag: ${{ parameters.tag }}
+            registry: ${{ parameters.registry }}
+            sqlUserSet: ${{ parameters.sqlUserSet }}
+            releaseToInstall: ${{ parameters.releaseToInstall }}
+            department: 'LNP'
+            vAzureLibraryPAT: $(vAzureLibraryPAT)
+            version: $(version)
+            overrideCriticalSha: ${{ parameters.overrideCriticalSha }}
+
+
+
+
+
+
+
+parameters:
+  - name: axiom
+    type: string
+  - name: tag
+    type: string
+  - name: registry
+    type: string
+  - name: releaseToInstall
+    type: string
+  - name: department
+    type: string
+  - name: sqlUserSet
+    type: string
+  - name: vAzureLibraryPAT
+    type: string
+  - name: version
+    type: string
+  - name: overrideCriticalSha
+    type: string
+
+jobs:
+  - job: check_agent_availability
+    displayName: Check Agent Availability
+    pool:
+      vmImage: 'ubuntu-latest'
+    steps:
+      - task: AzureCLI@2
+        displayName: 'Verify agent exists and is online'
+        inputs:
+          azureSubscription: 'pipeline-almondgaming-devtest'
+          scriptType: 'bash'
+          scriptLocation: 'inlineScript'
+          inlineScript: |
+            echo "Checking agent '${{ parameters.axiom }}' availability..."
+            
+            # Authenticate with Azure DevOps
+            echo "$(System.AccessToken)" | az devops login --only-show-errors
+            az devops configure --defaults organization=$(System.CollectionUri) --only-show-errors
+            
+            # Get pool ID directly
+            echo "Getting pool ID for 'Almond Axiom Build Agents'..."
+            POOL_ID=$(az pipelines pool list --query "[?name=='Almond Axiom Build Agents'].id | [0]" -o tsv 2>/dev/null)
+            
+            if [ -z "$POOL_ID" ] || [ "$POOL_ID" == "null" ]; then
+              echo "ERROR: Pool 'Almond Axiom Build Agents' not found"
+              echo "Available pools:"
+              az pipelines pool list --query "[].name" -o table
+              exit 1
+            fi
+            
+            echo "Found pool ID: $POOL_ID"
+            
+            # Check agent with case-insensitive matching using bash
+            echo "Searching for agent '${{ parameters.axiom }}'..."
+            
+            # Get all agents and their info
+            ALL_AGENTS=$(az pipelines agent list --pool-id $POOL_ID --query "[].{name:name,status:status,enabled:enabled}" -o json 2>/dev/null)
+            
+            # Try exact match first
+            AGENT_INFO=$(echo "$ALL_AGENTS" | jq -r ".[] | select(.name==\"${{ parameters.axiom }}\")")
+            
+            # If exact match fails, try case-insensitive bash comparison
+            if [ -z "$AGENT_INFO" ]; then
+              echo "Exact match failed. Trying case-insensitive search..."
+              SEARCH_NAME="${{ parameters.axiom }}"
+              SEARCH_LOWER=$(echo "$SEARCH_NAME" | tr '[:upper:]' '[:lower:]')
+              
+              # Find agent with case-insensitive name matching
+              AGENT_INFO=$(echo "$ALL_AGENTS" | jq -r --arg search_lower "$SEARCH_LOWER" '
+                .[] | select((.name | ascii_downcase) == $search_lower)
+              ')
+            fi
+            
+            # If still not found, try partial matching
+            if [ -z "$AGENT_INFO" ]; then
+              echo "Case-insensitive exact match failed. Trying partial match..."
+              SEARCH_LOWER=$(echo "${{ parameters.axiom }}" | tr '[:upper:]' '[:lower:]')
+              
+              AGENT_INFO=$(echo "$ALL_AGENTS" | jq -r --arg search_lower "$SEARCH_LOWER" '
+                .[] | select((.name | ascii_downcase) | contains($search_lower))
+              ')
+            fi
+            
+            # Debug: Show available agents if not found
+            if [ -z "$AGENT_INFO" ]; then
+              echo "ERROR: Agent '${{ parameters.axiom }}' not found in any variation"
+              echo "Available agents in pool:"
+              echo "$ALL_AGENTS" | jq -r '.[] | "\(.name) - Status: \(.status), Enabled: \(.enabled)"'
+              echo "Searched for: '${{ parameters.axiom }}'"
+              exit 1
+            fi
+            
+            # Extract agent details
+            ACTUAL_AGENT_NAME=$(echo "$AGENT_INFO" | jq -r '.name')
+            STATUS=$(echo "$AGENT_INFO" | jq -r '.status')
+            ENABLED=$(echo "$AGENT_INFO" | jq -r '.enabled')
+            
+            echo "Found agent: '$ACTUAL_AGENT_NAME' (searched for: '${{ parameters.axiom }}')"
+            echo "##vso[task.setvariable variable=actualAgentName;isOutput=true]$ACTUAL_AGENT_NAME"
+            
+            if [ "$STATUS" == "online" ] && [ "$ENABLED" == "true" ]; then
+              echo "Agent '$ACTUAL_AGENT_NAME' is ready"
+            else
+              echo "ERROR: Agent '$ACTUAL_AGENT_NAME' not ready (Status: $STATUS, Enabled: $ENABLED)"
+              exit 1
+            fi
+        name: agentCheck
+
+  - job: deploy_${{ parameters.axiom }}
+    dependsOn: check_agent_availability
+    condition: succeeded('check_agent_availability')
+    timeoutInMinutes: 10  # Timeout after 10 minutes if no agent is available
+    variables:
+      azureSubscription: 'pipeline-almondgaming-devtest'
+      storage: 'stalmonddevtestwesteu003'
+    displayName: Deploy to ${{ parameters.axiom }}  
+    pool:
+      name: "Almond axiom Build Agents"
+      demands:
+        - Agent.OS -equals Linux
+        - Agent.Name -equals ${{ parameters.axiom }}
+    steps:
+      - task: Bash@3
+        displayName: 'Set resolvedTag' 
+        inputs:
+          targetType: 'inline'
+          script: |
+            if [ "${{ parameters.tag }}" == "N/A" ]; then
+                echo "##vso[task.setvariable variable=resolvedTag]${{ parameters.version }}"
+              else
+                echo "##vso[task.setvariable variable=resolvedTag]${{ parameters.tag }}"
+            fi
+      - task: Bash@3 
+        condition: eq('${{ parameters.registry }}', 'cralmondgamingprodweu001')
+        inputs:
+          targetType: 'inline'
+          script: |
+            echo "azureSubscription: $(azureSubscription)"
+            echo "Storage: $(storage)"
+            echo "##vso[task.setvariable variable=azureSubscription;]pipeline-almondgaming-prod"
+            echo "##vso[task.setvariable variable=storage;]stalmondprodwesteu003"
+            echo "azureSubscription: $(azureSubscription)"
+            echo "Storage: $(storage)"
+      - task: AzureCLI@2
+        condition: and(eq('${{ parameters.releaseToInstall }}', 'N/A'), eq('${{ parameters.registry }}', 'cralmondgamingdevtestweu001'))
+        displayName: Create release package - devtest
+        inputs:
+          azureSubscription: 'pipeline-almondgaming-devtest'
+          scriptType: 'pscore'
+          scriptLocation: 'scriptPath'
+          scriptPath: '.pipelines/.packaging/Add-ReleasePackage.ps1'
+          arguments: '-OverrideCriticalSha ${{ parameters.overrideCriticalSha }} -PackageSemanticVersion $(Build.BuildNumber) -Registry ${{ parameters.registry }} -Tag  $(resolvedTag) -AzureLibraryPAT ${{ parameters.vAzureLibraryPAT }} -SQLUserSet ${{ parameters.sqlUserSet }}'
+      - task: AzureCLI@2
+        condition: and(eq('${{ parameters.releaseToInstall }}', 'N/A'), eq('${{ parameters.registry }}', 'cralmondgamingprodweu001'))
+        displayName: Create release package - prod
+        inputs:
+          azureSubscription: 'pipeline-almondgaming-prod'
+          scriptType: 'pscore'
+          scriptLocation: 'scriptPath'
+          scriptPath: '.pipelines/.packaging/Add-ReleasePackage.ps1'
+          arguments: '-OverrideCriticalSha ${{ parameters.overrideCriticalSha }} -PackageSemanticVersion $(Build.BuildNumber) -Registry ${{ parameters.registry }} -Tag  $(resolvedTag) -AzureLibraryPAT ${{ parameters.vAzureLibraryPAT }} -SQLUserSet ${{ parameters.sqlUserSet }}'
+      - task: HelmInstaller@1
+        inputs:
+          helmVersion: 'v3.9.0'  # Specify the version of Helm you want to install 
+      - task: Bash@3    
+        condition: eq('${{ parameters.releaseToInstall }}', 'N/A')
+        inputs:
+          targetType: 'inline'
+          script: |
+            echo "Storage: $(storage)"
+            cp ./.pipelines/k8s-steps.sh $(Build.ArtifactStagingDirectory)                 
+            cp ./sandbox-renaming.sh $(Build.ArtifactStagingDirectory)
+            cd $(Build.ArtifactStagingDirectory)
+            chmod +x ./k8s-steps.sh
+            export KUBECONFIG=/etc/kubernetes/admin.conf
+            
+            helm template  . --values ./templates/values/base-no-blue-green.yaml --values './templates/values/${{ parameters.department }}/values.${{ parameters.axiom }}.yaml' --output-dir './yamls' 
+            kubectl apply -f ./yamls/almond-gaming-jackpot-controller/templates/Kafka/
+            kubectl apply -f ./yamls/almond-gaming-jackpot-controller/templates/Caching/
+            kubectl apply -f ./yamls/almond-gaming-jackpot-controller/templates/Applications/setup.yml
+            kubectl apply -f ./yamls/almond-gaming-jackpot-controller/templates/Applications/
+      - task: AzureCLI@2
+        condition: and(ne('${{ parameters.releaseToInstall }}', 'N/A'), eq('${{ parameters.registry }}', 'cralmondgamingprodweu001'))
+        displayName: Download release package - prod
+        inputs:
+          azureSubscription: 'pipeline-almondgaming-prod'
+          scriptType: 'pscore'
+          scriptLocation: 'inlineScript'
+          inlineScript: |        
+            az storage blob download-batch --destination "./" --pattern "${{ parameters.releaseToInstall }}" --source "releases" --account-name "$(storage)"        
+            unzip "${{ parameters.releaseToInstall }}" -d release-folder
+            ls -la
+            chmod -R 777 release-folder
+      - task: AzureCLI@2
+        condition: and(ne('${{ parameters.releaseToInstall }}', 'N/A'), eq('${{ parameters.registry }}', 'cralmondgamingdevtestweu001'))
+        displayName: Download release package - devtest
+        inputs:
+          azureSubscription: 'pipeline-almondgaming-devtest'
+          scriptType: 'pscore'
+          scriptLocation: 'inlineScript'
+          inlineScript: |        
+            az storage blob download-batch --destination "./" --pattern "${{ parameters.releaseToInstall }}" --source "releases" --account-name "$(storage)"        
+            unzip "${{ parameters.releaseToInstall }}" -d release-folder
+            ls -la
+            chmod -R 777 release-folder
+      - task: HelmInstaller@1
+        inputs:
+          helmVersion: 'v3.9.0'  # Specify the version of Helm you want to install     
+      - task: Bash@3    
+        condition: ne('${{ parameters.releaseToInstall }}', 'N/A')
+        displayName: Apply release package
+        inputs:
+          targetType: 'inline'
+          script: |
+            ls -la
+            cd release-folder
+            ls -la
+            chmod +x ./k8s-steps.sh
+            export KUBECONFIG=/etc/kubernetes/admin.conf
+            helm template  . --values ./templates/values/base-no-blue-green.yaml --values './templates/values/${{ parameters.department }}/values.${{ parameters.axiom }}.yaml' --output-dir './yamls'
+            kubectl apply -f ./yamls/almond-gaming-jackpot-controller/templates/Kafka/setup.yml
+            kubectl apply -f ./yamls/almond-gaming-jackpot-controller/templates/Kafka/
+            kubectl apply -f ./yamls/almond-gaming-jackpot-controller/templates/Caching/
+            kubectl apply -f ./yamls/almond-gaming-jackpot-controller/templates/Applications/setup.yml
+            kubectl apply -f ./yamls/almond-gaming-jackpot-controller/templates/Applications/
+      # - task: AzureCLI@2
+      #   displayName: 'Trigger: EmpiricalTests - Run Test - ${{ parameters.axiom }}'
+      #   condition: or(eq('${{ parameters.axiom }}', 'almondemp1'), eq('${{ parameters.axiom }}', 'almondemp2'), eq('${{ parameters.axiom }}', 'almondemp4'), eq('${{ parameters.axiom }}', 'almondemp5'))
+      #   inputs:
+      #     azureSubscription: 'pipeline-almondgaming-prod'
+      #     scriptType: 'pscore'
+      #     scriptLocation: 'inlineScript'
+      #     inlineScript: |
+      #       az config set extension.use_dynamic_install=yes_without_prompt
+      #       echo $(System.AccessToken) | az devops login
+      #       $stringVersion = "${{ parameters.version }}"
+      #       $newStringVersion = ($stringVersion -replace '(^\d+\.\d+)\.0$', '$1') 
+      #       Write-Host $newStringVersion
+
+      #       az pipelines run --branch "aws" --name 'EmpiricalTests - Run Test' --org 'https://dev.azure.com/GamesGlobal' --project 'AlmondGaming' --parameters db_version=$newStringVersion ${{ parameters.axiom }}=true clear_jackpot_db=true clear_casino_db=true run_9mask=true create_users=true
