@@ -1,5 +1,5 @@
 provider "aws" {
-  region = vsr.region
+  region = var.region
 
   assume_role {
     role_arn  =  var.user_role_arn
