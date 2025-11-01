@@ -1,0 +1,9 @@
+resource "aws_route53_record" "records" {
+    for_each   =  toset(var.dns_entry)
+  zone_id       =  data.aws_route53_zone.the_zone.zone_id
+  name          =  "${each.value}.${local.hosted_zone_name}"
+
+  type          =  "CNAME"
+  ttl           =  "300"
+  records       =  [var.ingress_hostname]
+}
