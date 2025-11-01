@@ -18,14 +18,4 @@ resource "helm_release" "aws_lb_controller" {
     name  = "serviceAccount.name"
     value = kubernetes_service_account.alb_controller.metadata[0].name
   }
-
-  set {
-    name  = "region"
-    value = var.region
-  }
-
-  set {
-    name  = "vpcId"
-    value = var.vpc_id
-  }
 }
