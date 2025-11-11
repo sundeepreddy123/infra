@@ -125,7 +125,7 @@ resource "aws_route_table_association" "private" {
 # ------------------------------
 # Security Group
 # ------------------------------
-resource "aws_security_group" "default_sg" {
+resource "aws_security_group" "default" {
   name        = "${var.env}-default-sg"
   description = "Default SG for ${var.env}"
   vpc_id      = aws_vpc.main.id
