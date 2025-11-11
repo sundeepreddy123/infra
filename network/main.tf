@@ -23,8 +23,8 @@ resource "aws_internet_gateway" "igw" {
 # ------------------------------
 # Elastic IPs for NAT
 # ------------------------------
-resource "aws_eip" "nat_eip" {
-  count  = 3
+resource "aws_eip" "nat" {
+  count  = length(var.az_zones)
   domain = "vpc"
   tags = {
     Name = "${var.env}-nat-eip-${count.index + 1}"
@@ -35,7 +35,7 @@ resource "aws_eip" "nat_eip" {
 # Public Subnets
 # ------------------------------
 resource "aws_subnet" "public" {
-  count             = 3
+  count             = length(var.az_zones)
   vpc_id            = aws_vpc.main.id
   cidr_block        = cidrsubnet(var.vpc_cidr, 4, count.index)
   map_public_ip_on_launch = true
@@ -50,7 +50,7 @@ resource "aws_subnet" "public" {
 # Private Subnets
 # ------------------------------
 resource "aws_subnet" "private" {
-  count             = 3
+  count             = length(var.az_zones)
   vpc_id            = aws_vpc.main.id
   cidr_block        = cidrsubnet(var.vpc_cidr, 4, count.index + 3)
   availability_zone = element(var.availability_zones, count.index)
@@ -64,7 +64,7 @@ resource "aws_subnet" "private" {
 # NAT Gateways
 # ------------------------------
 resource "aws_nat_gateway" "nat" {
-  count         = 3
+  count         = length(var.az_zones)
   allocation_id = aws_eip.nat_eip[count.index].id
   subnet_id     = aws_subnet.public[count.index].id
   tags = {
@@ -78,42 +78,46 @@ resource "aws_nat_gateway" "nat" {
 # ------------------------------
 # Public Route Table
 resource "aws_route_table" "public" {
+  count  =  length(var.az_zones)
   vpc_id = aws_vpc.main.id
+  depends_on  =  [aws_nat_Gateway.nat]
   tags = {
     Name = "${var.env}-public-rt"
   }
 }
 
 resource "aws_route" "public_internet_access" {
+  count                  = (var.az_zones)
   route_table_id         = aws_route_table.public.id
   destination_cidr_block = "0.0.0.0/0"
   gateway_id             = aws_internet_gateway.igw.id
 }
 
-resource "aws_route_table_association" "public_assoc" {
-  count          = 3
+resource "aws_route_table_association" "public" {
+  count          = length(var.az_zones)
   subnet_id      = aws_subnet.public[count.index].id
   route_table_id = aws_route_table.public.id
 }
 
 # Private Route Tables (one per AZ)
 resource "aws_route_table" "private" {
-  count  = 3
+  count  = length(var.az_zones)
   vpc_id = aws_vpc.main.id
+  depends_on  =  [aws_nat_gateway.nat]
   tags = {
     Name = "${var.env}-private-rt-${count.index + 1}"
   }
 }
 
 resource "aws_route" "private_nat_gateway" {
-  count                  = 3
+  count                  = length(var.az_zones)
   route_table_id         = aws_route_table.private[count.index].id
   destination_cidr_block = "0.0.0.0/0"
   nat_gateway_id         = aws_nat_gateway.nat[count.index].id
 }
 
-resource "aws_route_table_association" "private_assoc" {
-  count          = 3
+resource "aws_route_table_association" "private" {
+  count          = lenght(var.az_zones)
   subnet_id      = aws_subnet.private[count.index].id
   route_table_id = aws_route_table.private[count.index].id
 }
