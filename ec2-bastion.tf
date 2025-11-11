@@ -9,7 +9,7 @@ module "ec2_bastion"{
   ]
   source  = "./modules/terrafrom-aws-ec2-bastion"
   version = "1.0.0"
-  project_info  = local.project_info
+  # project_info  = local.project_info
 
   vpc_info   =  {
     cidr_blocks  =  module.network.cidr_block
@@ -56,7 +56,7 @@ module "ec2_bastion_windows" {
   source     =  "./module/terrafrom-aws-ec2-bastion"
   version    =  "1.0.0"
 
-  project_info      = local.project_info
+  # project_info      = local.project_info
 
 
   vpc_info  =  {
