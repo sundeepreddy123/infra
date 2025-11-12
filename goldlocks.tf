@@ -9,7 +9,7 @@ resource "helm_release" "goldilocks" {
   version    = "6.3.4"  # check for latest at https://charts.fairwinds.com/stable
 
   values = [
-    file("${path.module}/goldilocks-values.yaml")
+    file("monitor/goldilocks-values.yaml")
   ]
 
   depends_on = [
