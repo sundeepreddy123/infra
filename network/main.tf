@@ -78,17 +78,17 @@ resource "aws_nat_gateway" "nat" {
 # ------------------------------
 # Public Route Table
 resource "aws_route_table" "public" {
-  count  =  length(var.az_zones)
+  count  = length(var.az_zones)
   vpc_id = aws_vpc.main.id
-  depends_on  =  [aws_nat_Gateway.nat]
+
   tags = {
-    Name = "${var.env}-public-rt"
+    Name = "${var.env}-public-rt-${count.index + 1}"
   }
 }
 
 resource "aws_route" "public_internet_access" {
-  count                  = (var.az_zones)
-  route_table_id         = aws_route_table.public.id
+  count                  = length(var.az_zones)
+  route_table_id         = aws_route_table.public[count.index].id
   destination_cidr_block = "0.0.0.0/0"
   gateway_id             = aws_internet_gateway.igw.id
 }
@@ -96,14 +96,14 @@ resource "aws_route" "public_internet_access" {
 resource "aws_route_table_association" "public" {
   count          = length(var.az_zones)
   subnet_id      = aws_subnet.public[count.index].id
-  route_table_id = aws_route_table.public.id
+  route_table_id = aws_route_table.public[count.index].id
 }
 
 # Private Route Tables (one per AZ)
 resource "aws_route_table" "private" {
   count  = length(var.az_zones)
   vpc_id = aws_vpc.main.id
-  depends_on  =  [aws_nat_gateway.nat]
+
   tags = {
     Name = "${var.env}-private-rt-${count.index + 1}"
   }
@@ -117,10 +117,11 @@ resource "aws_route" "private_nat_gateway" {
 }
 
 resource "aws_route_table_association" "private" {
-  count          = lenght(var.az_zones)
+  count          = length(var.az_zones)
   subnet_id      = aws_subnet.private[count.index].id
   route_table_id = aws_route_table.private[count.index].id
 }
+
 
 # ------------------------------
 # Security Group
