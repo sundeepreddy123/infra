@@ -66,7 +66,7 @@ resource "aws_eip" "nat" {
 # ------------------------------
 resource "aws_nat_gateway" "nat" {
   count         = length(var.az_zones)
-  allocation_id = aws_eip.nat_eip[count.index].id
+  allocation_id = aws_eip.nat[count.index].id
   subnet_id     = aws_subnet.public[count.index].id
   tags = {
     Name = "${var.env}-nat-${count.index + 1}"
@@ -155,28 +155,33 @@ resource "aws_security_group" "default" {
 # Network ACL
 # ------------------------------
 resource "aws_network_acl" "main" {
-  vpc_id     = aws_vpc.main.id
-  subnet_ids = concat(aws_subnet.public[*].id, aws_subnet.private[*].id)
+  vpc_id = aws_vpc.main.id
 
-  egress {
-    rule_number    = 200
-    egress         = true
-    protocol       = "-1"
-    rule_action    = "allow"
-    cidr_block     = "0.0.0.0/0"
-    from_port      = 0
-    to_port        = 0
+  subnet_ids = concat(
+    aws_subnet.public[*].id,
+    aws_subnet.private[*].id
+  )
 
+  # Inbound allow all
   ingress {
-    rule_number    = 200
-    egress         = true
-    protocol       = "-1"
-    rule_action    = "allow"
-    cidr_block     = "0.0.0.0/0"
-    from_port      = 0
-    to_port        = 0
+    rule_number   = 100
+    protocol      = "-1"
+    rule_action   = "allow"
+    cidr_block    = "0.0.0.0/0"
+    from_port     = 0
+    to_port       = 0
+  }
 
-  
+  # Outbound allow all
+  egress {
+    rule_number   = 100
+    protocol      = "-1"
+    rule_action   = "allow"
+    cidr_block    = "0.0.0.0/0"
+    from_port     = 0
+    to_port       = 0
+  }
+
   tags = {
     Name = "${var.env}-nacl"
   }
