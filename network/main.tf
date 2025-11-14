@@ -11,27 +11,6 @@ resource "aws_vpc" "main" {
 }
 
 # ------------------------------
-# Internet Gateway
-# ------------------------------
-resource "aws_internet_gateway" "igw" {
-  vpc_id = aws_vpc.main.id
-  tags = {
-    Name = "${var.env}-igw"
-  }
-}
-
-# ------------------------------
-# Elastic IPs for NAT
-# ------------------------------
-resource "aws_eip" "nat" {
-  count  = length(var.az_zones)
-  domain = "vpc"
-  tags = {
-    Name = "${var.env}-nat-eip-${count.index + 1}"
-  }
-}
-
-# ------------------------------
 # Public Subnets
 # ------------------------------
 resource "aws_subnet" "public" {
@@ -59,6 +38,28 @@ resource "aws_subnet" "private" {
     Tier = "Private"
   }
 }
+
+# ------------------------------
+# Internet Gateway
+# ------------------------------
+resource "aws_internet_gateway" "igw" {
+  vpc_id = aws_vpc.main.id
+  tags = {
+    Name = "${var.env}-igw"
+  }
+}
+
+# ------------------------------
+# Elastic IPs for NAT
+# ------------------------------
+resource "aws_eip" "nat" {
+  count  = length(var.az_zones)
+  domain = "vpc"
+  tags = {
+    Name = "${var.env}-nat-eip-${count.index + 1}"
+  }
+}
+
 
 # ------------------------------
 # NAT Gateways
@@ -156,29 +157,27 @@ resource "aws_security_group" "default" {
 resource "aws_network_acl" "main" {
   vpc_id     = aws_vpc.main.id
   subnet_ids = concat(aws_subnet.public[*].id, aws_subnet.private[*].id)
+
+  egress {
+    rule_number    = 200
+    egress         = true
+    protocol       = "-1"
+    rule_action    = "allow"
+    cidr_block     = "0.0.0.0/0"
+    from_port      = 0
+    to_port        = 0
+
+  ingress {
+    rule_number    = 200
+    egress         = true
+    protocol       = "-1"
+    rule_action    = "allow"
+    cidr_block     = "0.0.0.0/0"
+    from_port      = 0
+    to_port        = 0
+
+  
   tags = {
     Name = "${var.env}-nacl"
   }
-}
-
-resource "aws_network_acl_rule" "inbound" {
-  network_acl_id = aws_network_acl.main.id
-  rule_number    = 100
-  egress         = false
-  protocol       = "tcp"
-  rule_action    = "allow"
-  cidr_block     = "0.0.0.0/0"
-  from_port      = 22
-  to_port        = 443
-}
-
-resource "aws_network_acl_rule" "outbound" {
-  network_acl_id = aws_network_acl.main.id
-  rule_number    = 200
-  egress         = true
-  protocol       = "-1"
-  rule_action    = "allow"
-  cidr_block     = "0.0.0.0/0"
-  from_port      = 0
-  to_port        = 0
 }
