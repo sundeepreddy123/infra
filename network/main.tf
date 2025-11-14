@@ -77,7 +77,7 @@ resource "aws_nat_gateway" "nat" {
 # ------------------------------
 # Route Tables
 # ------------------------------
-# Public Route Table
+# Public RT (shared by all public subnets)
 resource "aws_route_table" "public" {
   count  = length(var.az_zones)
   vpc_id = aws_vpc.main.id
@@ -86,21 +86,20 @@ resource "aws_route_table" "public" {
     Name = "${var.env}-public-rt-${count.index + 1}"
   }
 }
-
+# Default route from public RT to IGW
 resource "aws_route" "public_internet_access" {
   count                  = length(var.az_zones)
   route_table_id         = aws_route_table.public[count.index].id
   destination_cidr_block = "0.0.0.0/0"
   gateway_id             = aws_internet_gateway.igw.id
 }
-
+# Associate all public subnets → public RT
 resource "aws_route_table_association" "public" {
   count          = length(var.az_zones)
   subnet_id      = aws_subnet.public[count.index].id
   route_table_id = aws_route_table.public[count.index].id
 }
-
-# Private Route Tables (one per AZ)
+# Private RTs (one per AZ → -> NAT in same AZ)
 resource "aws_route_table" "private" {
   count  = length(var.az_zones)
   vpc_id = aws_vpc.main.id
@@ -109,14 +108,14 @@ resource "aws_route_table" "private" {
     Name = "${var.env}-private-rt-${count.index + 1}"
   }
 }
-
+# Default route from private RT → NAT
 resource "aws_route" "private_nat_gateway" {
   count                  = length(var.az_zones)
   route_table_id         = aws_route_table.private[count.index].id
   destination_cidr_block = "0.0.0.0/0"
   nat_gateway_id         = aws_nat_gateway.nat[count.index].id
 }
-
+# Associate private subnets → private RT per AZ
 resource "aws_route_table_association" "private" {
   count          = length(var.az_zones)
   subnet_id      = aws_subnet.private[count.index].id
@@ -136,7 +135,7 @@ resource "aws_security_group" "default" {
     from_port   = 22
     to_port     = 22
     protocol    = "tcp"
-    cidr_blocks = ["0.0.0.0/0"]
+    cidr_blocks = ["0.0.0.0/0"]   # SSH allowed only from your IPs (NOT 0.0.0.0/0)
   }
 
   egress {
@@ -154,35 +153,35 @@ resource "aws_security_group" "default" {
 # ------------------------------
 # Network ACL
 # ------------------------------
-resource "aws_network_acl" "main" {
-  vpc_id = aws_vpc.main.id
+#resource "aws_network_acl" "main" {
+#  vpc_id = aws_vpc.main.id
 
-  subnet_ids = concat(
-    aws_subnet.public[*].id,
-    aws_subnet.private[*].id
-  )
+ # subnet_ids = concat(
+ #   aws_subnet.public[*].id,
+ #   aws_subnet.private[*].id
+ # )
 
   # Inbound allow all
-  ingress {
-    rule_number   = 100
-    protocol      = "-1"
-    rule_action   = "allow"
-    cidr_block    = "0.0.0.0/0"
-    from_port     = 0
-    to_port       = 0
-  }
+ # ingress {
+  #  rule_number   = 100
+  #  protocol      = "-1"
+  #  rule_action   = "allow"
+  #  cidr_block    = "0.0.0.0/0"
+  #  from_port     = 0
+   # to_port       = 0
+  #}
 
   # Outbound allow all
-  egress {
-    rule_number   = 100
-    protocol      = "-1"
-    rule_action   = "allow"
-    cidr_block    = "0.0.0.0/0"
-    from_port     = 0
-    to_port       = 0
-  }
+  # egress {
+  #  rule_number   = 100
+  #  protocol      = "-1"
+  # rule_action   = "allow"
+  # cidr_block    = "0.0.0.0/0"
+  # from_port     = 0
+  # to_port       = 0
+  #}
 
-  tags = {
-    Name = "${var.env}-nacl"
-  }
-}
+  #tags = {
+   # Name = "${var.env}-nacl"
+  #}
+#}
