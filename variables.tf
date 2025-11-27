@@ -52,3 +52,18 @@ variable "private_subnets" {
   type         =  list(string)
   default      =  []
 }
+////////////////// transit_gateway/////////////
+varible "vpc_ids" {
+  description  =  "List of vpc IDs tto attach"
+  type         =  list(string)
+}
+
+variable "subnet_ids_per_vpc" {
+  descrpition  =  "List of subnet lists matching each VPC"
+  type         =  list(list(string))
+}
+
+variable "tgw_name" {
+  default  = "prod-tgw"
+}
+
