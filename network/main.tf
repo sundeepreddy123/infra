@@ -185,3 +185,63 @@ resource "aws_security_group" "default" {
    # Name = "${var.env}-nacl"
   #}
 #}
+//////create transit gateway //////////
+resource "aws_ec2_transit_gteway" "this" {
+  description  = "Main Transit Gateway"
+  amazon_side_asn  = 64512            <------------ This can be change according to us
+
+  tags = {
+    Name = var.tgw_name
+    Env  = "prod"
+  }
+}
+
+//////////create transit gateway route table /////
+resource "aws_ec2_transit_gateway_route_table" "main" {
+  transit_gateway_id   =  aws_ec2_transit_gateway.this.id
+
+  tags  = {
+    Name = "${var.tgw_name}-rt"
+  }
+}
+
+//////////// Attach VPCs to Transit Gateway ////////////
+resource "aws_ec2_transit_gateway_vpc_attachment" "vpc_attachments" {
+  for_each  =  toset(var.vpc_ids)
+
+
+  transit_gateway_id  = aws_ec2_transit_gateway.this.id
+  vpc_id              = each.value
+  subnets_ids         = var.subnet_ids_per_vpc[index(var.vpc_ids, each.value)]
+
+  tags  =  {
+    Name  = "${var.tgw_name}-${each.value}-attachment"
+  }
+}
+
+/////////// Associate each attachment with the Route Table //////////
+resource "aws_ec2_transit_gateway_route_table_association" "assoc" {
+  for_each   =  aws_ec2_transit_gateway_vpc_attachement.vpc_attachments
+
+
+  transit_gateway_attachment_id  =  each.value.id
+  transit_gateway_route_table_id  = aws_ec2_transit_gateway_route_table.main.id
+}
+
+////////// Add default static route (optional) //////////
+resource "aws_ec2_transit_gateway_route" "default_route" {
+  destiation_cidr_block          = "0.0.0.0/0"
+  transit_gateway_route_table_id   = aws_ec2_transit_gateway_route_table.main.id
+  transit_gateway_attachment_id    = aws_ec2_transit_gateway_vpc_attachment.vpc_attachments["vpc-12345678"].id
+}
+
+/////// Trnasit Gateway Peering ////////////
+resource "aws_ec2_transit_gatewaay_peering_attachment" "peer" {
+  peer_region          = "us-east-1"
+  transit_gateway_id   = aws_ec2_transit_gateway.this.id
+  peer_transit_gateway_id   = "tgw-0abcd12345efgh"
+
+  tags = {
+    Name  =  "tgw-peering-euw1-use1"
+  }
+}
