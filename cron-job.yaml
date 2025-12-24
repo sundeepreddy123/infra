@@ -1,0 +1,25 @@
+trigger: none
+
+schedules:
+- cron: '0.17 * * *'
+  displayName: Daily spin down
+  branches:
+    include:
+      - auto-spin-down
+  always: true
+
+pool:
+  vmImage: ubuntu-latest
+
+jobs:
+- job: TriggerPipeline
+  displayName: spin Down dev
+  variables:
+  - group: aws-dev-almondgaming
+  pool:
+    vmImage: ubuntu-latest
+  steps:
+    - template: ./pipeline-spindown-template.yaml
+      parameters:
+        environment: 'dev'
+        
