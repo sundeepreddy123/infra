@@ -1,0 +1,93 @@
+parameters:
+- name: environment
+  type: string
+
+steps:
+  - task: HelmInstaller@0
+    displayName: 'Install helm'
+    inputs:
+      helmversion: '2.14.1'
+      installkubectl: true
+  - task: Bash@3
+    env:
+      AWS_ACCESS_KEY_ID: $(aws-access-key-id)
+      AWS_SECRET_ACCESS_KEY: $(aws-secret-access-key)
+    displayName: 'Spin Down'
+    inputs:
+      targetType: 'inline'
+      scrpit: | 
+
+        printenv AWS_ACCESS_KEY_ID
+        printenv AWS_SECRET_ACCESS_KEY
+
+        aws sts assume-role --region $(AWS_REGION) --role-arn
+
+        export $(printf "AWS_ACCESS_KEY_ID=%s AWS_SESSION_TOEKN=%S" $(aws sts assume-role --region %(AWS_REGION) --ROLE-ARN $(AWS_ADMIN_ROLE) --role-session-name "spindown" --query "credentials.[AccesskeyId,secretAccesskey,sessionToken]" --output text))
+
+        aws sts get-caller-identity --region $(AWS_REGION)
+
+        printenv AWS_ACCESS_KEY_ID
+        printenv AWS_SECRET_ACCESS_TOEKN
+
+        aws rds stop-db-instance --db-instance-identifier ${{ parameter.environment }}-ag-archive
+        aws rds stop-db-instance --db-instance-identifier ${{ parameter.environment }}-ag-main
+
+        aws eks update-kubeconig --name ${{ parameters.environment }}-ag --region $(AWS_REGION) --role-arn arn:aws:iam::$(AWS_ACCOUNT_ID)::role/${{ parameters.environment }}-ag-eks-tf-admin-role
+        kubectl get nodes
+        aws eks update-nodegroup-config --cluster-name ${{ parameter.environment }}-ag --nodegroup-name worker-node-grp --scaling-config minsize=7,maxsize=7,desiredsize=1
+
+        kubectl scale deployment --all --namespace frontend-c1 --replicas=0
+        kubectl scale deployment --all --namespace backend-c1 --replicas=0
+        kubectl scale deployment --all --namespace kafka-c1 --replicas=0
+        kubectl scale deployment --all --namespace caching-c1 --replicas=0
+
+
+
+
+
+
+  - task: Bash@3
+    env:
+      AWS_ACCESS_KEY_ID: $(aws-access-key-id)
+      AWS_SECRET_ACCESS_KEY: $(aws-secret-access-key)
+    displayName: 'Spin Down'
+    inputs:
+      targetType: 'inline'
+      scrpit: | 
+
+        printenv AWS_ACCESS_KEY_ID
+        printenv AWS_SECRET_ACCESS_KEY
+
+        aws sts assume-role --region $(AWS_REGION) --role-arn "$(AWS_ADMIN_ROLE)" --role-session-name "spindown"
+
+        export $(printf "AWS_ACCESS_KEY_ID=%s AWS_SECRET_ACCESS_KEY=%s AWS_SESSION_TOKEN=%s" $(aws sts assume-role --region $(AWS_REGION) --role-arn $(AWS_ADMIN_ROLE) --role-session-name "spindown" --query "credentials.[AccesskeyId,SecretAccessKey,SessionToken]" --output text))
+
+        aws sts get-caller-identity --region $(AWS_REGION)
+
+        printenv AWS_ACCESS_KEY_ID
+        Printenv AWS_SECRET_ACCESS_KEY
+        Printenv AWS_SESSION_TOKEN
+
+        aws rds stop-db-instance --db-instance-identifier ${{ parameters.environment }}-ag-archive
+        aws rds stop-db-instance --db-instance-identifier ${{ parameters.environment }}-ag-main
+
+        aws eks update-kubeconfig --name ${{ parameters.environment }}-ag --region $(AWS_REGION) --role-arn arn:aws:iam::$(AWS_ACCOUNT_ID):role/${{ parameter.environment }}-ag-eks-tf-admin-role
+
+        kubectl get nodes
+
+        aws eks update-nodegroup-config --cluster-name ${{ paramters.environemnt }}-ag --nodegroup-name worker-node-node-grp --scaling-config minsize=1,maxsize=7,desiredsize=1
+
+        kubectl scale deployment --all --namespaces frontend-c1 --replicas=0
+        kubectl scale deployment --all --namespaces backend-c1 --replicas=0
+        kubectl scale deployment --all --namespaces kafka-c1 --replicas=0
+        kubectl scale deployment --all --namespaces caching-c1 --replicas=0
+
+        kubectl scale deployment --all --namespaces frontend-c2 --replicas=0
+        kubectl scale deployment --all --namespaces backend-c2 --replicas=0
+        kubectl scale deployment --all --namespaces kafka-c2 --replicas=0
+        kubectl scale deployment --all --namespaces caching-c2 --replicas=0
+
+        kubectl delete svc -n frontend --all
+        kubectl delete svc -n frontend --all
+        kubectl delete svc -n kafka --all
+    
