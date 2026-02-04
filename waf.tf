@@ -52,3 +52,10 @@ visibility_config {
     }
   }
 }
+
+#### Create Application Load Balancer (ALB)
+
+resource "aws_lb" "app_alb" {
+  name        =  "myapp-alb"
+  internal    =  false
+  
