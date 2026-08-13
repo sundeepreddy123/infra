@@ -9,15 +9,15 @@ resource "helm_release" "karpenter" {
   values = [
     <<-EOT
     nodeSelector:
-      karpenter.sh/controller: 'true'
+      karpenter.sh/controller: 'true'  ///Karpenter controller itself needs a node
     tolerations:
       - key: nodetype
         operator: Equal
         value: core
         effect: NoSchedule
-    dnsPolicy: Default
+    dnsPolicy: Default  ///This tells the Karpenter pod to use the node's DNS configuration rather than Kubernetes' normal pod DNS configuration.
     settings:
-      clusterName: ${module.eks.cluster_name}
+      clusterName: ${module.eks.cluster_name}  //These tell Karpenter which EKS cluster it belongs to and where to connect.
       clusterEndpoint: ${module.eks.cluster_endpoint}
       interruptionQueue: ${module.karpenter.queue_name}
     webhook:
